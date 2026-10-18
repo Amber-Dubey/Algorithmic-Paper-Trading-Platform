@@ -1,0 +1,12 @@
+# Python Virtual Environment
+venv/
+ENV/
+env/
+
+# SQLite Database (Keep local data off GitHub)
+*.db
+*.sqlite3
+
+# Python Cache Files
+__pycache__/
+*.py[cod]
