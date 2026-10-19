@@ -12,7 +12,7 @@ import streamlit as st
 import pandas as pd
 import yfinance as yf
 
-from database.models import Portfolio, Transaction, User, init_db
+from database.models import Portfolio, Transaction, User, init_db, SessionLocal
 from services import market_data, trading_engine
 from utils.auth import register_user, authenticate_user 
 
@@ -224,15 +224,21 @@ st.markdown(f"<style>{CSS}</style>", unsafe_allow_html=True)
 
 
 def _load_user() -> User | None:
-    """Return the authenticated user or None."""
+    """Return the authenticated user from session state or None."""
     return st.session_state.get("user")
 
 
 def _active_user() -> User | None:
+    """Return the active user refreshed from a live database session."""
     user = _load_user()
     if user is None:
-        st.switch_page([".", "auth"] if "auth" in st.page_config else ["./auth.py"])
-    return user
+        return None
+    session = SessionLocal()
+    try:
+        refreshed_user = session.get(User, user.id)
+        return refreshed_user
+    finally:
+        session.close()
 
 
 def _selectbox_tickers() -> list[str]:
@@ -301,12 +307,12 @@ def _render_holding_table(user: User) -> None:
 
 
 def _render_ledger(user: User, limit: int = 30) -> None:
-    transactions = (
-        Transaction.query.filter_by(user_id=user.id)
-        .order_by(Transaction.timestamp.desc())
-        .limit(limit)
-        .all()
-    )
+    session = SessionLocal()
+    try:
+        transactions = session.query(Transaction).filter_by(user_id=user.id).order_by(Transaction.timestamp.desc()).limit(limit).all()
+    finally:
+        session.close()
+
     if not transactions:
         st.info("No transactions yet.")
         return
@@ -314,7 +320,7 @@ def _render_ledger(user: User, limit: int = 30) -> None:
     for t in transactions:
         rows.append(
             {
-                "Time": t.timestamp.astimezone().strftime("%Y-%m-%d %H:%M:%S UTC"),
+                "Time": t.timestamp.strftime("%Y-%m-%d %H:%M:%S") if t.timestamp else "",
                 "Ticker": t.ticker,
                 "Action": t.action,
                 "Shares": f"{t.shares:,.4f}",
@@ -369,8 +375,6 @@ def auth_view() -> None:
                 st.session_state["user"] = user
                 st.success(f"Welcome back, {user.username}.")
                 st.rerun()
-        if st.button("Continue to dashboard", disabled=True, use_container_width=True):
-            pass
 
     with tab_reg:
         st.subheader("Create an account")
@@ -402,6 +406,10 @@ def auth_view() -> None:
 
 def main_view() -> None:
     user = _active_user()
+    if user is None:
+        st.session_state.pop("user", None)
+        st.rerun()
+        return
 
     # --- Header / layout ---
     header = st.container()
@@ -600,21 +608,19 @@ def _chart_view() -> None:
 
 def _fetch_ohlc(ticker: str, interval: str) -> pd.DataFrame:
     try:
-        data = yf.download(ticker, period="5d", interval=interval, progress=False)
-        if data.empty:
+        stock = yf.Ticker(ticker)
+        df = stock.history(period="1mo", interval=interval)
+        if df.empty:
             return pd.DataFrame()
-        df = data.reset_index()
-        df.columns = [
-            "Datetime",
-            "Open",
-            "High",
-            "Low",
-            "Close",
-            "Adj Close",
-            "Volume",
-        ]
+        df = df.reset_index()
+        
+        # Normalize the date column name safely across all yfinance versions
+        if "Date" in df.columns and "Datetime" not in df.columns:
+            df = df.rename(columns={"Date": "Datetime"})
+            
         return df
-    except Exception:
+    except Exception as ex:
+        print(f"Error fetching OHLC for {ticker}: {ex}")
         return pd.DataFrame()
 
 
@@ -648,7 +654,7 @@ def _render_candlestick(ticker: str, interval: str) -> None:
 def _render_volume(ticker: str, interval: str) -> None:
     df = _fetch_ohlc(ticker, interval)
     if df.empty:
-        st.error(_chart_view.__doc__ if False else "Could not fetch OHLC data for this ticker.")
+        st.error("Could not fetch OHLC data for this ticker.")
         return
     fig = go.Figure()
     fig.add_trace(
@@ -790,7 +796,7 @@ def _ledger_view(user: User) -> None:
     col1, col2 = st.columns([2, 1])
     with col1:
         st.markdown('<div class="metric-label">Transaction Count</div>', unsafe_allow_html=True)
-        st.markdown(f'<div class="metric-value">{user.transactions.count()}</div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="metric-value">{len(user.transactions)}</div>', unsafe_allow_html=True)
     with col2:
         st.markdown('<div class="metric-label">Total Volume</div>', unsafe_allow_html=True)
         total = st.session_state.get("total_ledger_volume", 0.0)
@@ -801,16 +807,23 @@ def _ledger_view(user: User) -> None:
     st.markdown("</div>", unsafe_allow_html=True)
     st.markdown("---", unsafe_allow_html=True)
 
-    # Live snapshot of ledger totals for the sidebar
-    transactions = (
-        Transaction.query.filter_by(user_id=user.id)
-        .order_by(Transaction.timestamp.desc())
-        .all()
-    )
-    if transactions:
-        st.session_state["total_ledger_volume"] = sum(
-            t.shares * t.price for t in transactions
+    # Live snapshot of ledger totals for the sidebar using SessionLocal
+    session = SessionLocal()
+    try:
+        transactions = (
+            session.query(Transaction)
+            .filter_by(user_id=user.id)
+            .order_by(Transaction.timestamp.desc())
+            .all()
         )
+        if transactions:
+            st.session_state["total_ledger_volume"] = sum(
+                t.shares * t.price for t in transactions
+            )
+        else:
+            st.session_state["total_ledger_volume"] = 0.0
+    finally:
+        session.close()
 
 
 # ---------------------------------------------------------------------------

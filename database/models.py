@@ -16,15 +16,16 @@ class User(Base):
     password_hash = Column(String(255), nullable=False)
     balance = Column(Float, default=100000.0)
     
-    portfolios = relationship("Portfolio", back_populates="user", cascade="all, delete-orphan")
-    transactions = relationship("Transaction", back_populates="user", cascade="all, delete-orphan")
+    # Add lazy="selectin" here so they load immediately before the session closes
+    portfolios = relationship("Portfolio", back_populates="user", cascade="all, delete-orphan", lazy="selectin")
+    transactions = relationship("Transaction", back_populates="user", cascade="all, delete-orphan", lazy="selectin")
 
 class Portfolio(Base):
     __tablename__ = 'portfolio'
     id = Column(Integer, primary_key=True, autoincrement=True)
     user_id = Column(Integer, ForeignKey('users.id'), nullable=False)
     ticker = Column(String(20), nullable=False)
-    asset_type = Column(String(20), nullable=False) # Stock, Crypto, Forex
+    asset_type = Column(String(20), nullable=False)
     shares = Column(Float, nullable=False)
     avg_cost = Column(Float, nullable=False)
     
@@ -35,7 +36,7 @@ class Transaction(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     user_id = Column(Integer, ForeignKey('users.id'), nullable=False)
     ticker = Column(String(20), nullable=False)
-    action = Column(String(10), nullable=False) # BUY or SELL
+    action = Column(String(10), nullable=False)
     shares = Column(Float, nullable=False)
     price = Column(Float, nullable=False)
     timestamp = Column(DateTime, default=datetime.utcnow)
