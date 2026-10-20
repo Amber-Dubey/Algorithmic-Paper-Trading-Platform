@@ -759,8 +759,20 @@ def _trading_view(user: User) -> None:
         st.write(f"**Total:** ${cost:,.2f}")
         st.write(f"**Available Cash:** ${user.balance:,.2f}")
 
-    can_buy = action == "BUY" and user.balance >= cost
-    if st.button("Execute Trade", type="primary", use_container_width=True, disabled=not can_buy):
+    # Check how many shares the user currently owns for this specific ticker
+    holding_shares = 0.0
+    for p in user.portfolios:
+        if p.ticker == ticker:
+            holding_shares = p.shares
+            break
+
+    # Enable button if BUY and user has enough cash, OR if SELL and user owns enough shares
+    if action == "BUY":
+        can_trade = user.balance >= cost
+    else:
+        can_trade = holding_shares >= shares
+
+    if st.button("Execute Trade", type="primary", use_container_width=True, disabled=not can_trade):
         success = trading_engine.execute_trade(
             user_id=user.id,
             ticker=ticker,
@@ -777,7 +789,6 @@ def _trading_view(user: User) -> None:
 
     st.markdown("</div>", unsafe_allow_html=True)
     st.markdown("</div>", unsafe_allow_html=True)
-
 
 # ---------------------------------------------------------------------------
 # Ledger view

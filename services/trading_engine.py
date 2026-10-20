@@ -1,86 +1,86 @@
-from datetime import datetime, timezone
+"""Trading Engine Service.
 
-from database.models import SessionLocal, Transaction, User, Portfolio
+Handles transaction execution, balance deduction/addition, portfolio 
+position tracking (buying and selling fractional shares), and transaction logging.
+"""
 
-ACTION_BUY = "BUY"
-ACTION_SELL = "SELL"
+from database.models import SessionLocal, User, Portfolio, Transaction
 
-
-def _new_session():
-    return SessionLocal()
-
-
-def execute_trade(user_id: int, ticker: str, asset_type: str, action: str, shares: float, price: float) -> bool:
-    """Execute a BUY or SELL trade in the paper trading portfolio.
-
-    Returns True if the trade succeeded, False otherwise.
-    """
-    session = _new_session()
+def execute_trade(
+    user_id: int, 
+    ticker: str, 
+    asset_type: str, 
+    action: str, 
+    shares: float, 
+    price: float
+) -> bool:
+    """Execute a BUY or SELL order, updating user balance and portfolio holdings."""
+    session = SessionLocal()
     try:
         user = session.get(User, user_id)
-        if user is None:
+        if not user:
             return False
+        
+        cost = price * shares
+        action = action.upper()
 
-        total_cost = shares * price
-
-        if action == ACTION_BUY:
-            if user.balance < total_cost:
+        if action == "BUY":
+            # Verify user has enough cash balance
+            if user.balance < cost:
                 return False
-            user.balance -= total_cost
+            
+            # Deduct cash
+            user.balance -= cost
 
-            portfolio = session.scalar(
-                Portfolio.__table__.select()
-                .where(Portfolio.user_id == user_id)
-                .where(Portfolio.ticker == ticker)
-            )
-            if portfolio is not None:
+            # Check if user already owns this asset
+            portfolio = session.query(Portfolio).filter_by(user_id=user_id, ticker=ticker).first()
+            if portfolio:
+                # Recalculate weighted average cost
+                total_cost = (portfolio.shares * portfolio.avg_cost) + cost
                 portfolio.shares += shares
-                portfolio.avg_cost = (
-                    portfolio.avg_cost * portfolio.shares - shares * price
-                ) / portfolio.shares if portfolio.shares else 0.0
+                portfolio.avg_cost = total_cost / portfolio.shares
             else:
-                session.add(
-                    Portfolio(
-                        user_id=user_id,
-                        ticker=ticker,
-                        asset_type=asset_type,
-                        shares=shares,
-                        avg_cost=price,
-                    )
+                new_holding = Portfolio(
+                    user_id=user_id,
+                    ticker=ticker,
+                    asset_type=asset_type,
+                    shares=shares,
+                    avg_cost=price
                 )
+                session.add(new_holding)
 
-        elif action == ACTION_SELL:
-            portfolio = session.scalar(
-                Portfolio.__table__.select()
-                .where(Portfolio.user_id == user_id)
-                .where(Portfolio.ticker == ticker)
-            )
-            if portfolio is None or portfolio.shares < shares:
+        elif action == "SELL":
+            # Check if user owns the asset and has enough shares
+            portfolio = session.query(Portfolio).filter_by(user_id=user_id, ticker=ticker).first()
+            if not portfolio or portfolio.shares < shares:
                 return False
-            proceeds = shares * price
-            user.balance += proceeds
+            
+            # Credit cash back
+            user.balance += cost
             portfolio.shares -= shares
-            if portfolio.shares <= 0:
-                session.delete(portfolio)
 
+            # Remove portfolio row if shares drop to zero (accounting for tiny float precision)
+            if portfolio.shares <= 0.00005:
+                session.delete(portfolio)
         else:
             return False
 
-        session.add(
-            Transaction(
-                user_id=user_id,
-                ticker=ticker,
-                action=action,
-                shares=shares,
-                price=price,
-                timestamp=datetime.now(timezone.utc),
-            )
+        # Record immutable transaction in the ledger
+        tx = Transaction(
+            user_id=user_id,
+            ticker=ticker,
+            action=action,
+            shares=shares,
+            price=price
         )
-
+        session.add(tx)
+        
         session.commit()
         return True
-    except Exception:
+
+    except Exception as ex:
         session.rollback()
+        print(f"Error executing trade for user {user_id}: {ex}")
         return False
     finally:
         session.close()
