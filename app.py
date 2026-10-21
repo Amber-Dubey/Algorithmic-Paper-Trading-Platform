@@ -377,24 +377,28 @@ def auth_view() -> None:
                 st.success(f"Welcome back, {user.username}.")
                 st.rerun()
 
-    with tab_reg:
-        st.subheader("Create an account")
-        reg_user = st.text_input("Username", key="reg_user")
-        reg_pass = st.text_input("Password", type="password", key="reg_pass")
-        reg_pass2 = st.text_input("Confirm password", type="password", key="reg_pass2")
-        if st.button("Register", type="primary", use_container_width=True):
-            if not reg_user or not reg_pass or not reg_pass2:
-                st.error("All fields are required.")
-            elif reg_pass != reg_pass2:
-                st.error("Passwords do not match.")
-            elif len(reg_pass) < 6:
-                st.error("Password must be at least 6 characters.")
-            else:
-                if register_user(reg_user, reg_pass):
-                    st.success(f"Account created. Welcome, {reg_user}.")
-                    st.rerun()
+        with tab_reg:
+            st.subheader("Create an account")
+            reg_user = st.text_input("Username", key="reg_user")
+            reg_pass = st.text_input("Password", type="password", key="reg_pass")
+            reg_pass2 = st.text_input("Confirm password", type="password", key="reg_pass2")
+            if st.button("Register", type="primary", use_container_width=True):
+                if not reg_user or not reg_pass or not reg_pass2:
+                    st.error("All fields are required.")
+                elif reg_pass != reg_pass2:
+                    st.error("Passwords do not match.")
+                elif len(reg_pass) < 6:
+                    st.error("Password must be at least 6 characters.")
                 else:
-                    st.error("Registration failed. Username may already exist.")
+                    if register_user(reg_user, reg_pass):
+                        # Automatically log the user in after successful registration
+                        user = authenticate_user(reg_user, reg_pass)
+                        if user:
+                            st.session_state["user"] = user
+                        st.success(f"Account created. Welcome, {reg_user}.")
+                        st.rerun()
+                    else:
+                        st.error("Registration failed. Username may already exist.")
 
     st.markdown("</div>", unsafe_allow_html=True)
     st.markdown("</div>", unsafe_allow_html=True)
