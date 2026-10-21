@@ -20,7 +20,7 @@ def register_user(username: str, password: str) -> bool:
             return False  # Username already taken
         
         pwd_hash = hash_password(password)
-        new_user = User(username=username, password_hash=pwd_hash, balance=100000.0)
+        new_user = User(username=username, password_hash=pwd_hash, balance=100000.0) #devloper: Amber Dubey
         session.add(new_user)
         session.commit()
         return True

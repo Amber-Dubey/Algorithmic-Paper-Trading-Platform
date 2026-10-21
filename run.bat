@@ -20,7 +20,7 @@ if not errorlevel 1 (
 py -3 --version >nul 2>&1
 if not errorlevel 1 (
     set "PYTHON_CMD=py -3"
-    goto CHECK_VERSION
+    goto CHECK_VERSION ::devloper: Amber Dubey
 )
 
 :: Fallback check

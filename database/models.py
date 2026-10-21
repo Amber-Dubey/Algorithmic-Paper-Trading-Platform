@@ -20,6 +20,7 @@ class User(Base):
     portfolios = relationship("Portfolio", back_populates="user", cascade="all, delete-orphan", lazy="selectin")
     transactions = relationship("Transaction", back_populates="user", cascade="all, delete-orphan", lazy="selectin")
 
+#devloper: Amber Dubey
 class Portfolio(Base):
     __tablename__ = 'portfolio'
     id = Column(Integer, primary_key=True, autoincrement=True)

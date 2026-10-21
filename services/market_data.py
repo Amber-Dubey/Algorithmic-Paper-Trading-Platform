@@ -20,7 +20,7 @@ def get_live_price(ticker: str) -> Optional[float]:
                 return float(val)
         return None
     except Exception as ex:
-        print(f"Error fetching price for {ticker}: {ex}")
+        print(f"Error fetching price for {ticker}: {ex}") #devloper: Amber Dubey
         return None
 
 def get_historical_data(ticker: str, period: str = "1mo") -> pd.DataFrame:

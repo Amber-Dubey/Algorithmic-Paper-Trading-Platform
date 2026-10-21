@@ -20,6 +20,7 @@ from datetime import datetime, time
 # ---------------------------------------------------------------------------
 # Application setup
 # ---------------------------------------------------------------------------
+#devloper: Amber Dubey
 
 st.set_page_config(
     page_title="Paper Trading Terminal",
