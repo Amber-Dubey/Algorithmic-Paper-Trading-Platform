@@ -15,6 +15,7 @@ import yfinance as yf
 from database.models import Portfolio, Transaction, User, init_db, SessionLocal
 from services import market_data, trading_engine
 from utils.auth import register_user, authenticate_user 
+from datetime import datetime, time
 
 # ---------------------------------------------------------------------------
 # Application setup
@@ -246,7 +247,7 @@ def _selectbox_tickers() -> list[str]:
 
 
 def _selectbox_intervals() -> list[str]:
-    return ["1d", "5d", "1mo", "3mo", "1y"]
+    return ["1m", "5m", "15m", "1h", "1d", "5d", "1mo", "3mo", "1y"]
 
 
 def _balance_row() -> None:
@@ -404,6 +405,8 @@ def auth_view() -> None:
 # ---------------------------------------------------------------------------
 
 
+import time as py_time
+
 def main_view() -> None:
     user = _active_user()
     if user is None:
@@ -411,16 +414,49 @@ def main_view() -> None:
         st.rerun()
         return
 
+    # --- Ensure Session State Defaults are Locked In ---
+    if "data_mode" not in st.session_state:
+        st.session_state["data_mode"] = "Manual"
+    if "sidebar_live_balance" not in st.session_state:
+        st.session_state["sidebar_live_balance"] = True
+    if "active_view" not in st.session_state:
+        st.session_state["active_view"] = "portfolio"
+
+    # --- Custom CSS for Sidebar Navigation Buttons (Transparent, Red Outline) ---
+    st.markdown(
+        """
+        <style>
+        [data-testid="stSidebar"] .stButton > button {
+            background-color: transparent !important;
+            color: var(--text) !important;
+            border: 2px solid #ff4b4b !important;
+            border-radius: 6px !important;
+            font-weight: 500;
+        }
+        [data-testid="stSidebar"] .stButton > button:hover,
+        [data-testid="stSidebar"] .stButton > button:focus,
+        [data-testid="stSidebar"] .stButton > button:active {
+            color: #ff4b4b !important;
+            background-color: transparent !important;
+            border-color: #ff4b4b !important;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
     # --- Header / layout ---
     header = st.container()
     with header:
+        balance_str = f"${user.balance:,.2f}"
+        portfolio_str = f"${_total_portfolio_value(user):,.2f}"
         st.markdown(
-            '<div style="display:flex; justify-content:space-between; align-items:center;">'
-            f'<div style="font-size:1.35rem; font-weight:700; color:var(--text);">'
-            f'▤ Terminal — {user.username}</div>'
-            f'<div style="font-size:0.8rem; color:var(--muted);">'
-            f"Balance: ${user.balance:,.2f} | Portfolio: ${_total_portfolio_value(user):,.2f}</div>"
-            "</div>",
+            f"""
+            <div style="display:flex; justify-content:space-between; align-items:center;">
+                <div style="font-size:1.35rem; font-weight:700; color:var(--text);">▤ Terminal — {user.username}</div>
+                <div style="font-size:0.8rem; color:var(--muted);">Balance: {balance_str} | Portfolio: {portfolio_str}</div>
+            </div>
+            """,
             unsafe_allow_html=True,
         )
 
@@ -444,43 +480,56 @@ def main_view() -> None:
     starting = 100_000.0
     change = total - starting
     pct = (change / starting) * 100.0
+    color_var = "var(--accent-weak)" if change >= 0 else "var(--danger)"
     st.markdown(
-        f'<div class="metric-value" style="color:{"var(--accent-weak)" if change >= 0 else "var(--danger)"};">'
-        f"{change:+,.2f} ({pct:+.2f}%)</div>",
+        f'<div class="metric-value" style="color:{color_var};">'
+        f'{change:+,.2f} ({pct:+.2f}%)</div>',
         unsafe_allow_html=True,
     )
     st.markdown('<div class="metric-sub">vs. initial $100,000.00</div>', unsafe_allow_html=True)
     st.markdown("</div>", unsafe_allow_html=True)
 
-    # --- Sidebar: Live balance + data toggle ---
+    # --- Sidebar: Navigation & Controls ---
+    current_view = st.session_state.get("active_view", "portfolio")
+
     with st.sidebar:
         st.markdown("### Navigation")
-        view_tabs = st.tabs(["Portfolio", "Chart", "Trading", "Ledger"])
-        with view_tabs[0]:
-            if st.button("View Holdings", use_container_width=True):
+        
+        if st.button("Portfolio", use_container_width=True):
+            if current_view != "portfolio":
                 st.session_state["active_view"] = "portfolio"
-        with view_tabs[1]:
-            if st.button("Chart Ticker", use_container_width=True):
+                st.rerun()
+                
+        if st.button("Chart", use_container_width=True):
+            if current_view != "chart":
                 st.session_state["active_view"] = "chart"
-        with view_tabs[2]:
-            if st.button("Place Order", use_container_width=True):
+                st.rerun()
+                
+        if st.button("Trading", use_container_width=True):
+            if current_view != "trading":
                 st.session_state["active_view"] = "trading"
-        with view_tabs[3]:
-            if st.button("Transaction Ledger", use_container_width=True):
+                st.rerun()
+                
+        if st.button("Ledger", use_container_width=True):
+            if current_view != "ledger":
                 st.session_state["active_view"] = "ledger"
+                st.rerun()
 
         st.markdown("### Controls")
-        live_balance = st.checkbox("Live Balance Update", value=True, key="live_balance")
-        st.radio(
+        # Unique key assigned here to prevent duplicate key errors
+        live_balance = st.checkbox("Live Balance Update", key="sidebar_live_balance")
+        
+        data_mode = st.radio(
             "Data Fetch Mode",
-            ["Real-time", "Polling"],
+            ["Manual", "Real-time"],
             horizontal=True,
             key="data_mode",
         )
-        data_mode = st.session_state.get("data_mode", "Real-time")
-        if "data_mode" not in st.session_state:
-            st.session_state["data_mode"] = "Real-time"
-        polling_seconds = st.slider("Poll Interval (s)", min_value=5, max_value=60, value=30, key="poll_interval")
+        
+        # Slider only shows when Real-time background auto-refresh is active
+        polling_seconds = 30
+        if data_mode == "Real-time":
+            polling_seconds = st.slider("Poll Interval (s)", min_value=5, max_value=60, value=30, key="poll_interval")
 
     # --- Sidebar live user balance indicator ---
     with st.sidebar:
@@ -515,7 +564,11 @@ def main_view() -> None:
         unsafe_allow_html=True,
     )
 
-
+    # --- Active Real-Time Refresh Mechanism (Global across all tabs) ---
+    if live_balance and data_mode == "Real-time":
+        py_time.sleep(polling_seconds)
+        st.rerun()
+        
 # ---------------------------------------------------------------------------
 # Portfolio view
 # ---------------------------------------------------------------------------
@@ -523,48 +576,36 @@ def main_view() -> None:
 
 def _portfolio_view(user: User, live_balance: bool, polling_seconds: int, data_mode: str) -> None:
     st.markdown('<div class="pane">', unsafe_allow_html=True)
-    st.markdown('<div style="display:flex; justify-content:space-between; align-items:center;">'
-                '<div style="font-size:1.1rem; font-weight:600; color:var(--text);">'
-                "Holdings & Valuation</div>"
-                '<div style="font-size:0.75rem; color:var(--muted);">'
-                f"${_total_portfolio_value(user):,.2f} total</div>"
-                "</div>", unsafe_allow_html=True)
+    
+    # Header with total valuation (called safely without extra arguments)
+    total_val = _total_portfolio_value(user)
+    st.markdown(
+        '<div style="display:flex; justify-content:space-between; align-items:center;">'
+        '<div style="font-size:1.1rem; font-weight:600; color:var(--text);">Holdings & Valuation</div>'
+        f'<div style="font-size:0.75rem; color:var(--muted);">${total_val:,.2f} total</div>'
+        '</div>', 
+        unsafe_allow_html=True
+    )
 
+    # Cash Balance Status Card
+    st.markdown('<div class="pane">', unsafe_allow_html=True)
     if live_balance:
-        st.markdown('<div class="pane">', unsafe_allow_html=True)
-        st.markdown('<div class="metric-label">Refresh Cash Balance</div>', unsafe_allow_html=True)
-        st.markdown(
-            f'<div class="metric-value">${user.balance:,.2f}</div>',
-            unsafe_allow_html=True,
-        )
-        st.markdown('<div class="metric-sub">Updates on cadence interval</div>', unsafe_allow_html=True)
-        st.markdown("</div>", unsafe_allow_html=True)
-    else:
-        st.markdown('<div class="pane">', unsafe_allow_html=True)
-        st.markdown('<div class="metric-label">Cash Balance (static)</div>', unsafe_allow_html=True)
+        st.markdown('<div class="metric-label">Cash Balance (Live Mode Active)</div>', unsafe_allow_html=True)
         st.markdown(f'<div class="metric-value">${user.balance:,.2f}</div>', unsafe_allow_html=True)
-        st.markdown('<div class="metric-sub">Refreshed on demand</div>', unsafe_allow_html=True)
-        st.markdown("</div>", unsafe_allow_html=True)
+        st.markdown('<div class="metric-sub">Auto-refreshing via polling cadence</div>', unsafe_allow_html=True)
+    else:
+        st.markdown('<div class="metric-label">Cash Balance (Static)</div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="metric-value">${user.balance:,.2f}</div>', unsafe_allow_html=True)
+        st.markdown('<div class="metric-sub">Live updates paused</div>', unsafe_allow_html=True)
+    st.markdown("</div>", unsafe_allow_html=True)
 
-    if data_mode == "Polling":
-        st.markdown('<div class="pane">', unsafe_allow_html=True)
-        st.markdown('<div class="metric-label">Market Poll</div>', unsafe_allow_html=True)
-        st.markdown(
-            f'<div class="metric-value">{polling_seconds}s</div>',
-            unsafe_allow_html=True,
-        )
-        st.markdown('<div class="metric-sub">Live price refresh</div>', unsafe_allow_html=True)
-        st.markdown("</div>", unsafe_allow_html=True)
-
+    # Positions Table
     st.markdown('<div class="pane">', unsafe_allow_html=True)
     st.markdown('<div class="metric-label">Positions</div>', unsafe_allow_html=True)
     _render_holding_table(user)
     st.markdown("</div>", unsafe_allow_html=True)
 
-    st.markdown("</div>", unsafe_allow_html=True)
-    st.markdown("---", unsafe_allow_html=True)
-    _ledger_view(user)
-
+    st.markdown('</div>', unsafe_allow_html=True)
 
 # ---------------------------------------------------------------------------
 # Chart view
@@ -580,41 +621,172 @@ def _chart_view() -> None:
         '<div style="font-size:0.75rem; color:var(--muted);">Interactive candlestick + volume</div>'
         "</div>", unsafe_allow_html=True)
 
+    # Initialize safe defaults on first load only
+    today_date = pd.to_datetime("today").date()
+    st.session_state.setdefault("active_chart_interval", "1d")
+    st.session_state.setdefault("prev_chart_interval", "1d")
+    st.session_state.setdefault("calc_start_date", today_date - pd.Timedelta(days=30))
+    st.session_state.setdefault("calc_end_date", today_date)
+    st.session_state.setdefault("active_chart_ticker", "AAPL")
+
     col1, col2 = st.columns(2)
     with col1:
-        ticker = st.selectbox("Ticker", _selectbox_tickers(), key="chart_ticker")
+        ticker_input = st.text_input("Ticker Symbol (e.g. AAPL, BTC-USD)", value=st.session_state["active_chart_ticker"], key="chart_ticker_input")
+        ticker = ticker_input.upper().strip()
+        if ticker != st.session_state["active_chart_ticker"]:
+            st.session_state["active_chart_ticker"] = ticker
+    
     with col2:
-        interval = st.selectbox("Interval", _selectbox_intervals(), key="chart_interval")
+        intervals = _selectbox_intervals()
+        active_interval = st.session_state["active_chart_interval"]
+        default_idx = intervals.index(active_interval) if active_interval in intervals else intervals.index("1d")
+        interval = st.selectbox("Interval", intervals, index=default_idx, key="chart_interval")
 
-    if st.button("Render Chart", type="primary", use_container_width=True, key="render_chart"):
-        st.session_state["active_chart_ticker"] = ticker
+    # Safe boundaries for each interval
+    default_days_map = {
+        "1m": 2, "5m": 5, "15m": 10, "1h": 30,
+        "1d": 30, "5d": 90, "1mo": 365, "3mo": 730, "1y": 1825
+    }
+    absolute_min_map = {
+        "1m": 1, "5m": 1, "15m": 1, "1h": 1,
+        "1d": 2, "5d": 3, "1mo": 10, "3mo": 20, "1y": 60
+    }
+    max_days_map = {
+        "1m": 7, "5m": 60, "15m": 60, "1h": 730,
+        "1d": 3650, "5d": 3650, "1mo": 7300, "3mo": 7300, "1y": 7300
+    }
+
+    # Detect interval change from dropdown (NO st.rerun needed anymore!)
+    if interval != st.session_state["prev_chart_interval"]:
+        st.session_state["prev_chart_interval"] = interval
         st.session_state["active_chart_interval"] = interval
-        st.rerun()
+        
+        start_dt = pd.to_datetime(st.session_state["calc_start_date"])
+        end_dt = pd.to_datetime(st.session_state["calc_end_date"])
+        current_delta = (end_dt - start_dt).days
+        
+        max_allowed = max_days_map.get(interval, 3650)
+        abs_min = absolute_min_map.get(interval, 1)
+        default_days = default_days_map.get(interval, 30)
 
-    ticker = st.session_state.get("active_chart_ticker", ticker)
-    interval = st.session_state.get("active_chart_interval", interval)
-    if ticker and interval:
+        if current_delta > max_allowed:
+            st.session_state["calc_start_date"] = (end_dt - pd.Timedelta(days=max_allowed)).date()
+        elif current_delta < abs_min:
+            st.session_state["calc_start_date"] = (end_dt - pd.Timedelta(days=default_days)).date()
+        else:
+            # Fits safely -> Leave custom dates completely alone!
+            pass
+
+    # --- Custom Date & Time Range Selectors (No conflicting keys) ---
+    st.markdown("---")
+    st.markdown("**Custom Range Filter**")
+    d_col1, d_col2 = st.columns(2)
+    with d_col1:
+        start_date = st.date_input("Start Date", value=st.session_state["calc_start_date"])
+        start_time = st.time_input("Start Time", value=time(9, 30), key="chart_start_time")
+    with d_col2:
+        end_date = st.date_input("End Date", value=st.session_state["calc_end_date"])
+        end_time = st.time_input("End Time", value=time(16, 0), key="chart_end_time")
+
+    # Sync user input back into state safely
+    st.session_state["calc_start_date"] = start_date
+    st.session_state["calc_end_date"] = end_date
+
+    start_datetime = pd.Timestamp.combine(start_date, start_time)
+    end_datetime = pd.Timestamp.combine(end_date, end_time)
+
+    max_allowed_days = max_days_map.get(interval, 3650)
+    user_delta = (end_datetime - start_datetime).days
+
+    out_of_range = False
+    if user_delta > max_allowed_days:
+        out_of_range = True
+        st.error(f"❌ Out of Range Error: The '{interval}' interval supports a maximum history length of {max_allowed_days} days. Your selected range is {user_delta} days.")
+    elif user_delta < 0:
+        out_of_range = True
+        st.error("❌ Error: End Date/Time must be set after Start Date/Time.")
+
+    is_valid = False
+    if ticker:
+        test_data = yf.Ticker(ticker).history(period="5d")
+        if not test_data.empty:
+            is_valid = True
+
+    # --- Reactive Auto-Rendering ---
+    if not is_valid:
+        st.error("Asset not found")
+    elif ticker and not out_of_range:
         st.markdown('<div class="chart-tabs">', unsafe_allow_html=True)
         chart_tabs = st.tabs(["Candlestick", "Volume", "Trades"])
         with chart_tabs[0]:
-            _render_candlestick(ticker, interval)
+            _render_custom_candlestick(ticker, interval, start_datetime, end_datetime)
         with chart_tabs[1]:
-            _render_volume(ticker, interval)
+            _render_custom_volume(ticker, interval, start_datetime, end_datetime)
         with chart_tabs[2]:
-            _render_trades(ticker, interval)
+            _render_custom_trades(ticker, interval, start_datetime, end_datetime)
         st.markdown("</div>", unsafe_allow_html=True)
+        
     st.markdown("</div>", unsafe_allow_html=True)
 
+#__________________________________________________________________________
+#                   Candel stick for different date time(sample)
+def _render_custom_candlestick(ticker: str, interval: str, start_dt, end_dt) -> None:
+    df = _fetch_ohlc(ticker, interval, start_dt, end_dt)
+    if df.empty:
+        st.error("No data available for the selected date/time range.")
+        return
+    fig = go.Figure()
+    fig.add_trace(go.Candlestick(x=df["Datetime"], open=df["Open"], high=df["High"], low=df["Low"], close=df["Close"], name="OHLC"))
+    fig.update_layout(title=f"{ticker} — {interval}", xaxis_title="Time", yaxis_title="Price", height=420, template="plotly_dark", margin=dict(l=20, r=20, t=50, b=30))
+    st.plotly_chart(fig, use_container_width=True)
 
-def _fetch_ohlc(ticker: str, interval: str) -> pd.DataFrame:
+def _render_custom_volume(ticker: str, interval: str, start_dt, end_dt) -> None:
+    df = _fetch_ohlc(ticker, interval, start_dt, end_dt)
+    if df.empty:
+        st.error("No data available for the selected date/time range.")
+        return
+    fig = go.Figure()
+    fig.add_trace(go.Bar(x=df["Datetime"], y=df["Volume"], name="Volume", marker_color="#238636"))
+    fig.update_layout(title=f"{ticker} — Volume", xaxis_title="Time", yaxis_title="Volume", height=420, template="plotly_dark", margin=dict(l=20, r=20, t=50, b=30))
+    st.plotly_chart(fig, use_container_width=True)
+
+def _render_custom_trades(ticker: str, interval: str, start_dt, end_dt) -> None:
+    df = _fetch_ohlc(ticker, interval, start_dt, end_dt)
+    if df.empty:
+        st.error("No data available for the selected date/time range.")
+        return
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=df["Datetime"], y=df["Close"], mode="lines", line=dict(color="#238636", width=2), name="Close"))
+    fig.add_trace(go.Scatter(x=df["Datetime"], y=df["Open"], mode="lines", line=dict(color="#8b949e", width=1), name="Open"))
+    fig.update_layout(title=f"{ticker} — Lanes", xaxis_title="Time", yaxis_title="Price", height=420, template="plotly_dark", margin=dict(l=20, r=20, t=50, b=30))
+    st.plotly_chart(fig, use_container_width=True)
+
+#____________________________________________________________________________________
+
+def _fetch_ohlc(ticker: str, interval: str, start_dt=None, end_dt=None) -> pd.DataFrame:
     try:
         stock = yf.Ticker(ticker)
-        df = stock.history(period="1mo", interval=interval)
-        if df.empty:
+        if start_dt and end_dt:
+            df = stock.history(start=start_dt, end=end_dt, interval=interval)
+        else:
+            period_map = {
+                "1m": "7d",
+                "5m": "60d",
+                "15m": "60d",
+                "1h": "730d",
+                "1d": "1mo",
+                "5d": "6mo",
+                "1mo": "1y",
+                "3mo": "2y",
+                "1y": "5y"
+            }
+            period = period_map.get(interval, "1mo")
+            df = stock.history(period=period, interval=interval)
+            
+        if df is None or df.empty:
             return pd.DataFrame()
         df = df.reset_index()
         
-        # Normalize the date column name safely across all yfinance versions
         if "Date" in df.columns and "Datetime" not in df.columns:
             df = df.rename(columns={"Date": "Datetime"})
             
@@ -622,7 +794,6 @@ def _fetch_ohlc(ticker: str, interval: str) -> pd.DataFrame:
     except Exception as ex:
         print(f"Error fetching OHLC for {ticker}: {ex}")
         return pd.DataFrame()
-
 
 def _render_candlestick(ticker: str, interval: str) -> None:
     df = _fetch_ohlc(ticker, interval)
@@ -716,6 +887,16 @@ def _render_trades(ticker: str, interval: str) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _infer_asset_type(ticker: str) -> str:
+    """Automatically determine asset class based on ticker structure."""
+    ticker = ticker.upper()
+    if "-USD" in ticker:
+        return "Crypto"
+    elif "=X" in ticker or (len(ticker) == 6 and "USD" in ticker):
+        return "Forex"
+    else:
+        return "Stock"
+
 def _trading_view(user: User) -> None:
     st.markdown('<div class="pane">', unsafe_allow_html=True)
     st.markdown(
@@ -727,12 +908,13 @@ def _trading_view(user: User) -> None:
 
     col1, col2 = st.columns([1, 1])
     with col1:
-        ticker = st.selectbox("Ticker", _selectbox_tickers(), key="trade_ticker")
-        asset_type = st.selectbox(
-            "Asset Class",
-            ["Stock", "Crypto", "Forex"],
-            key="trade_asset_type",
-        )
+        ticker_input = st.text_input("Ticker Symbol (e.g. AAPL, BTC-USD, EURUSD=X)", value="AAPL", key="trade_ticker_input")
+        ticker = ticker_input.upper().strip()
+        
+        # Auto-infer asset class and display it as info
+        asset_type = _infer_asset_type(ticker)
+        st.caption(f"Detected Asset Class: **{asset_type}**")
+        
     with col2:
         action = st.radio(
             "Action",
@@ -747,9 +929,10 @@ def _trading_view(user: User) -> None:
             key="trade_shares",
         )
 
+    # Validate asset existence
     price = market_data.get_live_price(ticker)
     if price is None:
-        st.warning("Live price unavailable. Could not fetch a quote for this ticker.")
+        st.error("Asset not found")
         return
 
     cost = price * shares
@@ -759,14 +942,13 @@ def _trading_view(user: User) -> None:
         st.write(f"**Total:** ${cost:,.2f}")
         st.write(f"**Available Cash:** ${user.balance:,.2f}")
 
-    # Check how many shares the user currently owns for this specific ticker
+    # Check holdings for sell validation
     holding_shares = 0.0
     for p in user.portfolios:
         if p.ticker == ticker:
             holding_shares = p.shares
             break
 
-    # Enable button if BUY and user has enough cash, OR if SELL and user owns enough shares
     if action == "BUY":
         can_trade = user.balance >= cost
     else:
