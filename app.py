@@ -634,12 +634,23 @@ def _chart_view() -> None:
     st.session_state.setdefault("calc_end_date", today_date)
     st.session_state.setdefault("active_chart_ticker", "AAPL")
 
+    # Ensure default session state exists
+    if "active_chart_ticker" not in st.session_state:
+        st.session_state["active_chart_ticker"] = "AAPL"
+
+    # Callback to update the ticker instantly on Enter press
+    def update_ticker_state():
+        st.session_state["active_chart_ticker"] = st.session_state["chart_ticker_input"].upper().strip()
+
     col1, col2 = st.columns(2)
     with col1:
-        ticker_input = st.text_input("Ticker Symbol (e.g. AAPL, BTC-USD)", value=st.session_state["active_chart_ticker"], key="chart_ticker_input")
-        ticker = ticker_input.upper().strip()
-        if ticker != st.session_state["active_chart_ticker"]:
-            st.session_state["active_chart_ticker"] = ticker
+        st.text_input(
+            "Ticker Symbol (e.g. AAPL, BTC-USD)",
+            value=st.session_state["active_chart_ticker"],
+            key="chart_ticker_input",
+            on_change=update_ticker_state
+        )
+        ticker = st.session_state["active_chart_ticker"]
     
     with col2:
         intervals = _selectbox_intervals()
